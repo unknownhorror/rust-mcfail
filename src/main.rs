@@ -1,7 +1,9 @@
+use ::futures::future::join_all;
 use ipnet;
 use ipnet::Ipv4Net;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use tokio::task::futures;
 
 async fn check_ip_legality(checked_ip: &ipnet::Ipv4Net) -> bool {
     use ipnet::Ipv4Net;
@@ -31,28 +33,30 @@ async fn check_ip_legality(checked_ip: &ipnet::Ipv4Net) -> bool {
     !excluded_ips.iter().any(|ips| ips.contains(checked_ip))
 }
 
+async fn filter_ip(ip: Ipv4Net) -> Option<Ipv4Net> {
+    if check_ip_legality(&ip).await {
+        return Some(ip);
+    }
+    None
+}
 async fn generate_ips() -> Vec<ipnet::Ipv4Net> {
-    let mut ip_ranges: Arc<Mutex<Vec<Ipv4Net>>> = Default::default();
     let mut handles = vec![];
     for i in 0..256 {
         for j in 0..256 {
+            println!("{}", i);
             let ip = format!("{}.{}.0.0/16", i, j)
                 .parse::<ipnet::Ipv4Net>()
                 .unwrap();
-            let ip_ranges = ip_ranges.clone();
-            handles.push(tokio::spawn(async move {
-                if (check_ip_legality(&ip).await) {
-                    ip_ranges.lock().unwrap().push(ip);
-                }
-            }));
+            handles.push(tokio::spawn(filter_ip(ip)));
         }
     }
     let mut sol: Vec<Ipv4Net> = vec![];
-    for handle in handles {
-        tokio::join!(handle);
-    }
-    for i in ip_ranges.lock().unwrap().iter() {
-        sol.push(*i);
+    for res in join_all(handles).await {
+        if let Ok(unwrapped_res) = res {
+            if let Some(ip) = unwrapped_res {
+                sol.push(ip);
+            }
+        }
     }
     sol
 }
@@ -60,7 +64,7 @@ async fn generate_ips() -> Vec<ipnet::Ipv4Net> {
 #[tokio::main]
 async fn main() {
     let ips = generate_ips();
-    println!("ips:\n{:#?}", ips.await);
+    // println!("ips:\n{:#?}", ips.await);
 }
 
 #[cfg(test)]
